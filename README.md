@@ -65,6 +65,19 @@ Internet
 
 ---
 
+## Terraform 構成
+
+このリポジトリには用途に応じた 2 つの Terraform 構成が含まれています。
+
+| 構成 | ディレクトリ | EC2 | OS | 特徴 |
+|------|------------|-----|----|------|
+| **標準（2 台）** | [`terraform/`](terraform/README.md) | 2 台（Public + Private） | Ubuntu 22.04 | Java と Python を別ホストに分離。ネットワーク構成の可視化に適している |
+| **single-host** | [`terraform/single-host/`](terraform/single-host/README.md) | 1 台（Public のみ） | Amazon Linux 2023 | Java + Python を同一インスタンスに集約。|
+
+> **どちらを使うか**: POV・デモ用途でコストを抑えたい場合は `terraform/single-host/` を使用してください。
+
+---
+
 ## 前提条件
 
 - Terraform `~> 1.10`
@@ -250,26 +263,31 @@ dd-observability-pov/
 │   └── python-app/                   # Flask アプリ
 │       ├── app.py
 │       └── requirements.txt
-└── terraform/
+├── terraform/                        # 標準構成（Ubuntu 22.04 / 2 台）
+│   ├── README.md
+│   ├── main.tf
+│   ├── base.tf                       # VPC / Subnet / IGW / NAT / IAM / SG
+│   ├── data.tf                       # Ubuntu AMI 取得
+│   ├── ec2.tf                        # Java EC2 (Public) + Python EC2 (Private)
+│   ├── sg.tf / rds.tf / upload.tf / outputs.tf
+│   ├── keypair.tf / variables.tf / locals.tf.example
+│   ├── terraform.tfvars.example
+│   ├── keys/                         # 生成済み SSH キー（gitignore 対象）
+│   └── scripts/
+│       ├── java_userdata.sh
+│       └── python_userdata.sh
+└── terraform/single-host/            # single-host 構成（Amazon Linux 2023 / 1 台）
     ├── README.md
-    ├── main.tf                       # Terraform / プロバイダーバージョン制約
-    ├── provider.tf                   # プロバイダー設定
-    ├── variables.tf                  # 入力変数定義
-    ├── locals.tf                     # 共通タグ（gitignore 対象）
-    ├── locals.tf.example
-    ├── base.tf                       # VPC / Subnet / IGW / NAT / IAM / SG
-    ├── data.tf                       # Ubuntu AMI 取得
-    ├── keypair.tf                    # SSH キーペア生成
-    ├── ec2.tf                        # EC2 インスタンス
-    ├── sg.tf                         # Python SG / RDS SG
-    ├── rds.tf                        # RDS PostgreSQL
-    ├── upload.tf                     # apps/ を EC2 に転送
-    ├── outputs.tf                    # SSH コマンド・デモ手順
+    ├── main.tf
+    ├── base.tf                       # VPC / Subnet / IGW（NAT なし）/ IAM / SG
+    ├── data.tf                       # Amazon Linux 2023 AMI 取得
+    ├── ec2.tf                        # App EC2 (Public, Java + Python 同居)
+    ├── sg.tf / rds.tf / upload.tf / outputs.tf
+    ├── keypair.tf / variables.tf / locals.tf.example
     ├── terraform.tfvars.example
     ├── keys/                         # 生成済み SSH キー（gitignore 対象）
     └── scripts/
-        ├── java_userdata.sh
-        └── python_userdata.sh
+        └── userdata.sh               # dnf ベース（Corretto 21 + Python 3）
 ```
 
 ---

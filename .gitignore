@@ -15,6 +15,7 @@ terraform.tfvars
 
 # locals.tf contains PII (name, email) and environment-specific tags
 terraform/locals.tf
+terraform/single-host/locals.tf
 
 # Steering files (may contain PII, instance IDs, IP addresses)
 # Only .steering/public/ is tracked
