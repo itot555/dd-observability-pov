@@ -1,0 +1,27 @@
+# Copy this file to terraform.tfvars and adjust values for your environment.
+# terraform.tfvars は .gitignore 対象です。
+
+# --- General ----------------------------------------------------------------
+# 全リソース名・タグ・サービス名の先頭に付く識別子。
+# パートナー様ごとに一意な名前に変更してご利用ください（小文字英数字とハイフンのみ）。
+# name_prefix = "pov"
+
+# AWS リージョン
+# region = "ap-northeast-1"
+
+# --- Network ----------------------------------------------------------------
+# VPC / サブネットの CIDR を変更したい場合のみ設定（他環境と重複しないことを確認）。
+# vpc_cidr             = "10.0.0.0/16"
+# public_subnet_cidrs  = ["10.0.101.0/24", "10.0.102.0/24"]
+# private_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
+
+# SSH (22) と Spring Boot (8080) を許可する送信元 CIDR。
+# デフォルトは 0.0.0.0/0（全開放）。本番検証ではオフィス IP 等に絞ってください。
+# allowed_ip = ["1.2.3.4/32", "5.6.7.8/32"]
+
+# --- EC2 / RDS --------------------------------------------------------------
+# ec2_instance_type    = "t3.medium"
+# ec2_volume_size      = 30
+# db_instance_class    = "db.t4g.micro"
+# db_engine_version    = "17.10"
+# db_allocated_storage = 20

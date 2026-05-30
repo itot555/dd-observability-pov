@@ -1,0 +1,18 @@
+# Copy this file to locals.tf and customize the tags below.
+# locals.tf は氏名・メールアドレス等の個人情報を含む可能性があるため .gitignore 対象です。
+#
+# name_prefix を変更したい場合は terraform.tfvars 側で設定してください
+# （locals.tf ではなく variables.tf で定義されています）。
+
+locals {
+  common_tags = {
+    Terraform   = "true"
+    Environment = "poc"
+    Owner       = "Your Name"
+    Email       = "your.email@example.com"
+    Project     = "datadog-observability-pov"
+  }
+
+  # name_prefix は variables.tf 由来。locals 内ではエイリアスとして参照する。
+  name_prefix = var.name_prefix
+}
