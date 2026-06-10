@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: java-app
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: java-app
+  template:
+    metadata:
+      labels:
+        app: java-app
+        tags.datadoghq.com/service: ${NAME_PREFIX}-java-front
+        tags.datadoghq.com/env: ${NAME_PREFIX}
+        tags.datadoghq.com/version: "1.0"
+      annotations:
+        # Datadog Agent にこのコンテナのログ収集設定を伝える（source: java でパイプライン自動適用）
+        ad.datadoghq.com/java-app.logs: '[{"source":"java","service":"${NAME_PREFIX}-java-front"}]'
+    spec:
+      containers:
+        - name: java-app
+          image: ${JAVA_IMAGE}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PYTHON_API_URL
+              value: "http://python-app:8000"
+            - name: DD_SERVICE
+              value: "${NAME_PREFIX}-java-front"
+            - name: DD_ENV
+              value: "${NAME_PREFIX}"
+            - name: DD_VERSION
+              value: "1.0"
+            - name: DD_LOGS_INJECTION
+              value: "true"
+            - name: HTTP_READ_TIMEOUT
+              value: "15000"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi

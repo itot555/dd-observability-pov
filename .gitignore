@@ -16,6 +16,7 @@ terraform.tfvars
 # locals.tf contains PII (name, email) and environment-specific tags
 terraform/locals.tf
 terraform/single-host/locals.tf
+terraform/kubernetes/locals.tf
 
 # Steering files (may contain PII, instance IDs, IP addresses)
 # Only .steering/public/ is tracked
@@ -51,6 +52,7 @@ aws_credentials*
 
 # Maven build output
 apps/java-app/target/
+apps/kubernetes/java-app/target/
 
 # Python virtualenv & bytecode
 __pycache__/

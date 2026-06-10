@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <!--
+    STDOUT JSON appender for container / Kubernetes environments.
+    LogstashEncoder automatically includes all MDC fields as JSON keys.
+    dd.trace_id / dd.span_id are injected into MDC by dd-java-agent when
+    DD_LOGS_INJECTION=true. Without the agent they output as empty string.
+    source: java in the Datadog Agent applies the Java log pipeline automatically.
+  -->
+  <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder"/>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="STDOUT"/>
+  </root>
+</configuration>

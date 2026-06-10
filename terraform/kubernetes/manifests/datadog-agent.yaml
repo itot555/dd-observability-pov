@@ -1,0 +1,55 @@
+apiVersion: datadoghq.com/v2alpha1
+kind: DatadogAgent
+metadata:
+  name: datadog
+  namespace: datadog
+spec:
+  global:
+    site: datadoghq.com
+    credentials:
+      apiSecret:
+        secretName: datadog-secret
+        keyName: api-key
+
+  features:
+    #--------------------------------------------------------------------------
+    # APM — SSI（Single Step Instrumentation）
+    # enabledNamespaces で指定した namespace のみ APM ライブラリを自動注入する。
+    # kubectl rollout restart でアプリ Pod を再起動すると Admission Controller が
+    # dd-java-agent / ddtrace を init container 経由で自動注入する。
+    #--------------------------------------------------------------------------
+    apm:
+      enabled: true
+      instrumentation:
+        enabled: true
+        enabledNamespaces:
+          - ${NAMESPACE}
+        libVersions:
+          java: "v1"
+          python: "v2"
+
+    #--------------------------------------------------------------------------
+    # Log Collection
+    # containerCollectAll: false にして Pod アノテーション
+    # (ad.datadoghq.com/<container>.logs) を持つコンテナのみ収集する。
+    # DD_LOGS_INJECTION=true と組み合わせることでトレースとログを相関付ける。
+    #--------------------------------------------------------------------------
+    logCollection:
+      enabled: true
+      containerCollectAll: false
+
+    #--------------------------------------------------------------------------
+    # Admission Controller
+    # mutateUnlabelled: false — ラベルのないコンテナは変更しない（安全側に倒す）
+    #--------------------------------------------------------------------------
+    admissionController:
+      enabled: true
+      mutateUnlabelled: false
+
+    # Kubernetes リソースの可視化
+    orchestratorExplorer:
+      enabled: true
+
+    # kube-state-metrics ベースのメトリクス収集
+    kubeStateMetricsCore:
+      enabled: true

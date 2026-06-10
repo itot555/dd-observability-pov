@@ -1,0 +1,20 @@
+server:
+  port: 8080
+
+app:
+  python-api-url: ${PYTHON_API_URL:http://localhost:8000}
+  http:
+    connect-timeout: ${HTTP_CONNECT_TIMEOUT:5000}
+    read-timeout: ${HTTP_READ_TIMEOUT:5000}
+    long-run-read-timeout: ${HTTP_LONG_RUN_READ_TIMEOUT:60000}
+
+logging:
+  level:
+    root: INFO
+    com.example.javaapp: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
