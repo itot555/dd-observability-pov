@@ -541,13 +541,33 @@
         <span class="span-count span-long">35s span</span>
       </div>
     </div>
+
+    <h3>Analytics endpoints (Java → Python → Postgres) — エラー分析シナリオ</h3>
+    <p style="font-size:13px;color:var(--text-dim);margin:8px 0;">
+      <code>order_monthly_stats</code> テーブルを使った前月比成長率計算。<code>user_id % 7 == 0</code> の 7 名は先月データなし → <code>ZeroDivisionError</code> → ~14% エラー。Java 側は <code>/analytics</code> のみ 500ms 待機してリトライ。
+    </p>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <div class="endpoint-row header-row">
+        <span>Public Path</span><span>Python Path</span><span>Behavior</span><span>Result</span>
+      </div>
+      <div class="endpoint-row">
+        <code>GET /analytics</code><code>GET /api/analytics</code>
+        <span>ランダムユーザーの前月比成長率を計算（2 DB spans）。500 時 Java が 500ms 待機して 1 回リトライ</span>
+        <span class="span-count span-21">~14% error</span>
+      </div>
+      <div class="endpoint-row">
+        <code>GET /analytics/summary</code><code>GET /api/analytics/summary</code>
+        <span>コホート（7〜8 名）全員の成長率を計算。cohort=0（1/7）は全員エラー</span>
+        <span class="span-count span-long">~14% error</span>
+      </div>
+    </div>
   </section>
 
   <!-- ============== DATA MODEL ============== -->
   <section class="card">
     <h2>Data Model</h2>
     <p style="font-size:14px;color:var(--text-dim);margin-bottom:8px;">
-      Python アプリ起動時に <code>init_db()</code> がテーブル作成（CREATE TABLE IF NOT EXISTS）と初期サンプルデータの投入を冪等に実行します。
+      Python アプリ起動時に <code>init_db()</code> → <code>init_analytics_db()</code> の順でテーブル作成とサンプルデータ投入を冪等に実行します。
     </p>
     <div class="two-col">
       <div>
@@ -577,6 +597,22 @@
         <p style="font-size:12px;color:var(--text-dim);margin-top:6px;">Index: <code>idx_orders_user_id</code> on <code>(user_id)</code></p>
       </div>
     </div>
+    <h3 style="margin-top:20px;">order_monthly_stats（初期 93 行）</h3>
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:8px;">
+      全 50 ユーザーの今月データ＋43 名（<code>user_id % 7 != 0</code>）の先月データ。7 名（user_id: 7, 14, 21, 28, 35, 42, 49）は先月データなし → Analytics エンドポイントで ZeroDivisionError が発生する設計。
+    </p>
+    <table>
+      <thead><tr><th>Column</th><th>Type</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr><td>id</td><td>SERIAL PK</td><td></td></tr>
+        <tr><td>user_id</td><td>INT FK → users.id</td><td></td></tr>
+        <tr><td>year_month</td><td>VARCHAR(7)</td><td>例: <code>'2026-06'</code></td></tr>
+        <tr><td>total_amount</td><td>INTEGER</td><td></td></tr>
+        <tr><td>order_count</td><td>INTEGER</td><td></td></tr>
+        <tr><td>created_at</td><td>TIMESTAMP DEFAULT now()</td><td></td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:12px;color:var(--text-dim);margin-top:6px;">UNIQUE constraint: <code>(user_id, year_month)</code></p>
   </section>
 
   <!-- ============== TERRAFORM ============== -->

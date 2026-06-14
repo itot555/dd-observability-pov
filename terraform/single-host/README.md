@@ -127,6 +127,8 @@ curl http://<ec2_public_ip>:8080/hello
 curl http://<ec2_public_ip>:8080/db/normal
 curl http://<ec2_public_ip>:8080/db/n1
 curl http://<ec2_public_ip>:8080/db/long-run
+curl http://<ec2_public_ip>:8080/analytics          # ~14% エラー（ZeroDivisionError）
+curl http://<ec2_public_ip>:8080/analytics/summary  # cohort=0 で必ず 500
 ```
 
 ブラウザで `http://<ec2_public_ip>:8080/` を開くと Web UI から各エンドポイントを操作できます。
@@ -173,6 +175,136 @@ set -a; source /home/ec2-user/.env; set +a
 LOG_DIR=/var/log/<prefix> DD_SERVICE=<prefix>-py-back DD_ENV=<prefix> DD_LOGS_INJECTION=true \
 nohup ddtrace-run python3 app.py > /var/log/<prefix>/python-app.log 2>&1 &
 ```
+
+---
+
+---
+
+## トラブルシューティング
+
+### トレースが Datadog に表示されない
+
+**1. Agent の APM ステータス確認**
+
+```bash
+sudo datadog-agent status | grep -A 20 "APM Agent"
+```
+
+`Status: Running` と `Receiver: localhost:8126` が表示されていれば受付は正常。表示されない場合は Agent を再起動してから再確認する。
+
+```bash
+sudo systemctl restart datadog-agent
+```
+
+**2. APM ポートへの疎通確認**
+
+```bash
+curl -s http://localhost:8126/info | python3 -m json.tool
+```
+
+`version` / `endpoints` が返れば APM は受付中。
+
+**3. SSI の適用確認**
+
+EC2 ホストレベル SSI は `LD_PRELOAD` 経由で注入されるため、`ddtrace-run` や `-javaagent` は**プロセス名に現れません**。
+環境変数で注入状態を確認します。
+
+```bash
+# Python — DD_INJECTION_ENABLED=tracer が含まれているか確認
+cat /proc/$(pgrep -f 'python3 app.py')/environ | tr '\0' '\n' | grep "^DD_"
+# → DD_INJECTION_ENABLED=tracer が含まれていれば OK
+
+# Java — ログに dd.trace_id が入っているか確認（SSI 適用の最も確実な指標）
+curl -s http://localhost:8080/hello > /dev/null
+tail -1 /var/log/<name_prefix>/java-app.log | python3 -m json.tool | grep "trace_id"
+# → "dd.trace_id": "0" 以外の値が入っていれば SSI 適用済み
+```
+
+Python は `DD_INJECTION_ENABLED=tracer`、Java はログへの `dd.trace_id` 注入がそれぞれ SSI 適用の証拠です。
+Java で `trace_id` が `"0"` または存在しない場合は Step 2（Agent インストール）が未完了か、アプリを再起動していません。
+
+**4. DD_SERVICE / DD_ENV の設定確認**
+
+同じコマンドの出力で `DD_SERVICE`, `DD_ENV`, `DD_VERSION` がセットされていることを確認。
+
+---
+
+### ログが Datadog に表示されない
+
+**1. ログ収集の有効化確認**
+
+```bash
+sudo grep "logs_enabled" /etc/datadog-agent/datadog.yaml
+# → logs_enabled: true であること
+```
+
+`false` またはコメントアウトされている場合は `true` に変更して Agent を再起動。
+
+**2. ログ設定ファイルの確認**
+
+```bash
+sudo cat /etc/datadog-agent/conf.d/java.d/conf.yaml
+sudo cat /etc/datadog-agent/conf.d/python.d/conf.yaml
+```
+
+`path` が実際のログファイルパス（`/var/log/<name_prefix>/java-app.log` 等）と一致しているか確認。
+
+**3. ログファイルの権限確認**
+
+```bash
+ls -la /var/log/<name_prefix>/
+sudo -u dd-agent cat /var/log/<name_prefix>/python-app.log | tail -3
+```
+
+`dd-agent` ユーザーが読めない場合は `chmod o+r /var/log/<name_prefix>/*.log` で対応。
+
+**4. Agent のログ収集状態確認**
+
+```bash
+sudo datadog-agent status | grep -A 20 "Logs Agent"
+```
+
+`BytesSent` がカウントアップしていれば正常に送信中。
+
+---
+
+### トレースとログが相関付いていない
+
+**1. DD_LOGS_INJECTION の設定確認**
+
+```bash
+# Python
+cat /proc/$(pgrep -f 'python3 app.py')/environ | tr '\0' '\n' | grep DD_LOGS_INJECTION
+
+# Java
+cat /proc/$(pgrep -f 'java.*jar')/environ | tr '\0' '\n' | grep DD_LOGS_INJECTION
+# → 両方 DD_LOGS_INJECTION=true であること
+```
+
+**2. ログに trace_id が含まれているか確認**
+
+EC2 の Python / Java ログはテキスト形式のため `grep` で確認します。
+
+```bash
+# Python（テキスト形式ログ）
+tail -5 /var/log/<name_prefix>/python-app.log | grep -o "dd.trace_id=[^ ]*"
+
+# Java（JSON 形式ログ）
+tail -1 /var/log/<name_prefix>/java-app.log | python3 -m json.tool | grep "trace_id"
+```
+
+`dd.trace_id` が `0` でなければ相関設定は成功。`0` の場合はリクエストが来ていないか APM が未計装です。
+
+**3. ログパイプラインと source タグの確認**
+
+```bash
+sudo grep "source" /etc/datadog-agent/conf.d/java.d/conf.yaml
+sudo grep "source" /etc/datadog-agent/conf.d/python.d/conf.yaml
+```
+
+`source: java` / `source: python` が設定されていないと Datadog の自動ログパイプラインが適用されず、`trace_id` の抽出・相関付けが行われない。
+
+Datadog UI → Logs → Configuration → Pipelines で `source:java` および `source:python` のパイプラインが有効になっているかも合わせて確認。
 
 ---
 

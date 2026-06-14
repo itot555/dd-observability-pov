@@ -174,7 +174,7 @@ kubectl create secret generic datadog-secret \
   --namespace=datadog
 
 # DatadogAgent CRD の適用（アプリ namespace にのみ SSI を有効化）
-sed "s|\${NAMESPACE}|pov|g" manifests/datadog-agent.yaml | kubectl apply -f -
+sed "s|\${NAMESPACE}|pov|g; s|\${CLUSTER_NAME}|pov|g" manifests/datadog-agent.yaml | kubectl apply -f -
 
 # Agent DaemonSet の起動確認
 kubectl rollout status daemonset -n datadog
@@ -194,6 +194,7 @@ kubectl port-forward svc/java-app 8080:8080 -n pov
 # → http://localhost:8080
 # → Datadog APM でトレースを確認
 # → ログ ↔ トレース相関を確認
+# → /analytics（~14% エラー）・/analytics/summary でエラー分析シナリオを確認
 ```
 
 ---
@@ -258,6 +259,176 @@ terraform destroy
 | VPC / NAT GW / Subnet | 依存関係順に自動削除 |
 
 所要時間: 約 15〜20 分。コピペ手順は `terraform output demo_destroy` で確認できます。
+
+---
+
+---
+
+## トラブルシューティング
+
+> **事前準備: namespace 変数のセット**
+> 以下のコマンドを最初に実行しておくと、以降のコマンドをそのままコピペできます。
+> `kubectl get ns` で実際の namespace を確認してください。
+>
+> ```bash
+> NS=dryrun-pov   # 自分の name_prefix に変更
+> ```
+
+---
+
+### トレースが Datadog に表示されない
+
+**1. DatadogAgent CRD の状態確認**
+
+```bash
+kubectl get datadogagent -n datadog
+# AGENT / CLUSTER-AGENT が "Running (N/N/N)" であることを確認
+
+kubectl describe datadogagent datadog -n datadog | grep -A 10 "Conditions"
+# Type: ActiveDatadogMetrics, Status: True であれば正常
+```
+
+**2. Cluster Agent のリーダー選出確認**
+
+DatadogAgent CRD を apply / 変更した後は、Cluster Agent のリーダー選出が完了してから Pod を再起動してください。
+完了前に rollout restart すると、Admission Controller の設定が未完成のまま Pod が作成され init container が注入されません。
+
+```bash
+# Cluster Agent Pod が Running (1/1) であることを確認
+kubectl get pods -n datadog -l agent.datadoghq.com/component=cluster-agent
+
+# リーダー選出が完了しているか確認（"Started leading" が出力されていれば OK）
+kubectl logs -n datadog -l agent.datadoghq.com/component=cluster-agent --tail=100 | grep -i "leader"
+```
+
+**3. Admission Controller Webhook の確認**
+
+```bash
+# MutatingWebhookConfiguration が存在するか確認
+kubectl get mutatingwebhookconfigurations | grep datadog
+# → "datadog-webhook" が 4 件表示されれば OK
+```
+
+**4. SSI init container の注入確認**
+
+```bash
+kubectl describe pod -l app=java-app -n $NS \
+  | grep "^\s*datadog-lib\|^\s*datadog-init\|State:\|Reason:"
+kubectl describe pod -l app=python-app -n $NS \
+  | grep "^\s*datadog-lib\|^\s*datadog-init\|State:\|Reason:"
+```
+
+`datadog-lib-java-init` / `datadog-lib-python-init` / `datadog-init-apm-inject` が `Reason: Completed` であれば注入済み。
+
+**init container がない場合** — Cluster Agent のリーダー選出完了（Step 2）を確認してから再起動します。
+
+```bash
+kubectl rollout restart deployment/java-app deployment/python-app -n $NS
+kubectl rollout status deployment/java-app deployment/python-app -n $NS
+```
+
+**5. Agent の APM 受信状態確認**
+
+```bash
+AGENT_POD=$(kubectl get pods -n datadog -l agent.datadoghq.com/component=agent -o name | head -1)
+echo "Target pod: $AGENT_POD"   # 空なら上のラベルを確認
+kubectl exec -n datadog $AGENT_POD -c agent -- agent status | grep -A 15 "APM Agent"
+# "Receiver" セクションに受信スパン数が表示されれば Agent まで届いている
+```
+
+---
+
+### ログが Datadog に表示されない
+
+**1. Pod アノテーションの確認**
+
+ログ収集は `containerCollectAll: false` のため、Pod アノテーションで収集対象を明示しています。
+
+```bash
+kubectl get pod -l app=java-app -n $NS \
+  -o jsonpath='{.items[0].metadata.annotations}' | python3 -m json.tool
+```
+
+`ad.datadoghq.com/java-app.logs` に `"source":"java"` / `"service":"<NS>-java-front"` が設定されていることを確認。
+
+**2. ログ収集設定の確認**
+
+```bash
+kubectl get datadogagent datadog -n datadog \
+  -o jsonpath='{.spec.features.logCollection}' | python3 -m json.tool
+# → "enabled": true であることを確認
+# → "containerCollectAll": false は正常（Pod アノテーション方式）
+```
+
+**3. Agent のログ収集状態確認**
+
+```bash
+AGENT_POD=$(kubectl get pods -n datadog -l agent.datadoghq.com/component=agent -o name | head -1)
+kubectl exec -n datadog $AGENT_POD -c agent -- agent status | grep -A 20 "Logs Agent"
+# "Bytes sent" がカウントアップしていれば正常に送信中
+```
+
+**4. Agent Pod のエラーログ確認**
+
+```bash
+# node agent (DaemonSet)
+kubectl logs -n datadog -l agent.datadoghq.com/component=agent --tail=50 | grep -iE "error|warn"
+
+# Cluster Agent
+kubectl logs -n datadog -l agent.datadoghq.com/component=cluster-agent --tail=50 | grep -iE "error|warn"
+```
+
+---
+
+### トレースとログが相関付いていない
+
+**1. DD_LOGS_INJECTION 環境変数の確認**
+
+SSI による init container 注入後は `DD_LOGS_INJECTION=true` が自動設定されます。
+
+```bash
+kubectl exec -n $NS deployment/java-app -- env | grep DD_LOGS_INJECTION
+kubectl exec -n $NS deployment/python-app -- env | grep DD_LOGS_INJECTION
+# → DD_LOGS_INJECTION=true であること
+```
+
+表示されない場合は init container が注入されていません（上記「トレースが表示されない」を参照）。
+
+**2. ログに trace_id が含まれているか確認**
+
+```bash
+# python3 -m json.tool は複数行 JSON 非対応のため --tail=1 で 1 行ずつ確認
+kubectl logs -l app=python-app -n $NS --tail=1 | python3 -m json.tool | grep -E "trace_id|span_id"
+kubectl logs -l app=java-app -n $NS --tail=1 | python3 -m json.tool | grep -E "trace_id|span_id"
+```
+
+`dd.trace_id` / `dd.span_id` が存在すれば相関設定は成功。
+値が `"0"` の場合はリクエストが来ていないか APM がトレースを生成できていません。
+
+**3. ログの source タグ確認**
+
+Datadog のログパイプラインは `source: java` / `source: python` が起点です。
+`source` が正しくないと `trace_id` の抽出・相関付けが行われません。
+
+```bash
+kubectl get pod -l app=python-app -n $NS \
+  -o jsonpath='{.items[0].metadata.annotations}' | python3 -m json.tool | grep source
+# → "source": "python" であること（Java は "java"）
+```
+
+**4. init container が Error の場合**
+
+```bash
+kubectl describe pod -l app=java-app -n $NS \
+  | grep "^\s*datadog-lib\|^\s*datadog-init\|State:\|Reason:"
+```
+
+`Reason: Error` の場合は Pod を削除して Admission Controller に再注入させます。
+
+```bash
+kubectl delete pod -l app=java-app -n $NS
+# Deployment が自動で新しい Pod を作成し、init container が再注入される
+```
 
 ---
 

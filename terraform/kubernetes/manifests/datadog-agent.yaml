@@ -6,6 +6,7 @@ metadata:
 spec:
   global:
     site: datadoghq.com
+    clusterName: ${CLUSTER_NAME}
     credentials:
       apiSecret:
         secretName: datadog-secret

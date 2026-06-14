@@ -112,7 +112,7 @@ output "demo_step2_install_agent" {
       --namespace=datadog
 
     ## DatadogAgent CRD の適用（アプリ namespace にのみ SSI を有効化）
-    sed "s|\$${NAMESPACE}|${local.name_prefix}|g" \
+    sed "s|\$${NAMESPACE}|${local.name_prefix}|g; s|\$${CLUSTER_NAME}|${aws_eks_cluster.this.name}|g" \
       manifests/datadog-agent.yaml | kubectl apply -f -
 
     ## Agent DaemonSet と Admission Controller Webhook の起動確認（1〜2 分）

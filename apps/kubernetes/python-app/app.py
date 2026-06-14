@@ -83,6 +83,14 @@ def conn_cursor():
         get_pool().putconn(conn)
 
 
+def _months():
+    """Return (current_month, prev_month) as 'YYYY-MM' strings."""
+    now = datetime.now(timezone.utc)
+    curr = now.strftime("%Y-%m")
+    prev = f"{now.year - 1}-12" if now.month == 1 else f"{now.year}-{now.month - 1:02d}"
+    return curr, prev
+
+
 def init_db():
     """Create schema and seed sample data if empty. Idempotent."""
     schema = """
@@ -122,6 +130,43 @@ def init_db():
                     (uid, random.choice(products), random.randint(100, 5000)),
                 )
         logger.info("init_db: seed complete")
+
+
+def init_analytics_db():
+    """Create order_monthly_stats table and seed data. Idempotent."""
+    schema = """
+    CREATE TABLE IF NOT EXISTS order_monthly_stats (
+        id           SERIAL PRIMARY KEY,
+        user_id      INTEGER    NOT NULL REFERENCES users(id),
+        year_month   VARCHAR(7) NOT NULL,
+        total_amount INTEGER    NOT NULL,
+        order_count  INTEGER    NOT NULL,
+        created_at   TIMESTAMP  NOT NULL DEFAULT now(),
+        UNIQUE(user_id, year_month)
+    );
+    """
+    with conn_cursor() as (_, cur):
+        cur.execute(schema)
+        cur.execute("SELECT count(*) FROM order_monthly_stats")
+        if cur.fetchone()[0] > 0:
+            logger.info("init_analytics_db: already seeded, skipping")
+            return
+
+        curr, prev = _months()
+        logger.info("init_analytics_db: seeding curr=%s prev=%s", curr, prev)
+        for user_id in range(1, 51):
+            cur.execute(
+                "INSERT INTO order_monthly_stats (user_id, year_month, total_amount, order_count) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (user_id, curr, random.randint(1000, 9999), random.randint(5, 20)),
+            )
+            if user_id % 7 != 0:
+                cur.execute(
+                    "INSERT INTO order_monthly_stats (user_id, year_month, total_amount, order_count) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    (user_id, prev, random.randint(1000, 9999), random.randint(5, 20)),
+                )
+        logger.info("init_analytics_db: seed complete")
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +264,79 @@ def db_long_run():
     })
 
 
+@app.route("/api/analytics")
+def analytics():
+    curr, prev = _months()
+    user_id = random.randint(1, 50)
+    with conn_cursor() as (_, cur):
+        cur.execute(
+            "SELECT total_amount, order_count FROM order_monthly_stats "
+            "WHERE user_id = %s AND year_month = %s",
+            (user_id, curr),
+        )
+        curr_row = cur.fetchone()
+        cur.execute(
+            "SELECT COALESCE(SUM(total_amount), 0) FROM order_monthly_stats "
+            "WHERE user_id = %s AND year_month = %s",
+            (user_id, prev),
+        )
+        prev_amount = cur.fetchone()[0]
+
+    current_amount = curr_row[0] if curr_row else 0
+    order_count = curr_row[1] if curr_row else 0
+    logger.info("analytics: user_id=%d current_month=%d prev_month=%d orders=%d",
+                user_id, current_amount, prev_amount, order_count)
+    growth_rate = (current_amount - prev_amount) / prev_amount * 100
+    return jsonify({
+        "user_id": user_id,
+        "current_month": curr,
+        "current_amount": current_amount,
+        "prev_amount": prev_amount,
+        "growth_rate": round(growth_rate, 2),
+        "order_count": order_count,
+    })
+
+
+@app.route("/api/analytics/summary")
+def analytics_summary():
+    curr, prev = _months()
+    cohort = random.randint(0, 6)
+    user_ids = [uid for uid in range(1, 51) if uid % 7 == cohort]
+    logger.info("analytics_summary: cohort=%d user_ids=%s curr=%s prev=%s",
+                cohort, user_ids, curr, prev)
+    results = []
+    for uid in user_ids:
+        with conn_cursor() as (_, cur):
+            cur.execute(
+                "SELECT COALESCE(SUM(total_amount), 0) FROM order_monthly_stats "
+                "WHERE user_id = %s AND year_month = %s",
+                (uid, curr),
+            )
+            current = cur.fetchone()[0]
+            cur.execute(
+                "SELECT COALESCE(SUM(total_amount), 0) FROM order_monthly_stats "
+                "WHERE user_id = %s AND year_month = %s",
+                (uid, prev),
+            )
+            prev_val = cur.fetchone()[0]
+        logger.info("analytics_summary: user_id=%d current=%d prev=%d", uid, current, prev_val)
+        growth_rate = (current - prev_val) / prev_val * 100
+        results.append({"user_id": uid, "growth_rate": round(growth_rate, 2)})
+    return jsonify({
+        "cohort": cohort,
+        "user_count": len(results),
+        "results": results,
+    })
+
+
 if __name__ == "__main__":
     try:
         init_db()
     except Exception as e:
         logger.exception("init_db failed (continuing without DB): %s", e)
+    try:
+        init_analytics_db()
+    except Exception as e:
+        logger.exception("init_analytics_db failed (continuing without analytics): %s", e)
     port = int(os.getenv("PORT", 8000))
     app.run(host="0.0.0.0", port=port)

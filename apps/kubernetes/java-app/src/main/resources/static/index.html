@@ -217,6 +217,8 @@
           <option value="/db/normal">/db/normal</option>
           <option value="/db/n1">/db/n1</option>
           <option value="/db/long-run">/db/long-run</option>
+          <option value="/analytics">/analytics</option>
+          <option value="/analytics/summary">/analytics/summary</option>
         </select>
         <button id="send-btn" onclick="sendRequest()">送信</button>
       </div>
@@ -228,6 +230,12 @@
 
       <div id="response-header" class="response-header"></div>
       <div id="output-box" class="empty">ここにレスポンスが表示されます</div>
+
+      <div class="card-label">Analytics 負荷生成</div>
+      <div class="input-row">
+        <button id="analytics-btn" onclick="toggleAnalytics()" style="padding:10px 22px;background:#c8c8c8;border:none;border-radius:6px;font-size:15px;font-weight:600;color:#333;cursor:pointer;white-space:nowrap;">開始</button>
+      </div>
+      <div id="analytics-status" style="background:#fff;border-radius:6px;padding:10px 14px;font-family:'SF Mono','Fira Code',monospace;font-size:13px;color:#555;min-height:36px;">待機中</div>
     </div>
 
     <!-- Right: decorative dashboard panels -->
@@ -346,6 +354,70 @@
     document.getElementById('endpoint').addEventListener('keydown', e => {
       if (e.key === 'Enter') sendRequest();
     });
+
+    // ── Analytics 負荷生成 ──────────────────────────────────────
+    const ANALYTICS_DURATION = 600; // seconds
+    const ANALYTICS_INTERVAL = 5000; // ms
+    let analyticsTimer = null;
+    let analyticsRemaining = ANALYTICS_DURATION;
+    let analyticsSuccess = 0;
+    let analyticsErrors = 0;
+
+    function toggleAnalytics() {
+      if (analyticsTimer) {
+        stopAnalytics();
+      } else {
+        startAnalytics();
+      }
+    }
+
+    function startAnalytics() {
+      analyticsSuccess = 0;
+      analyticsErrors = 0;
+      analyticsRemaining = ANALYTICS_DURATION;
+      document.getElementById('analytics-btn').textContent = '停止';
+      updateAnalyticsStatus();
+      sendAnalyticsRequest();
+      analyticsTimer = setInterval(() => {
+        analyticsRemaining -= ANALYTICS_INTERVAL / 1000;
+        if (analyticsRemaining <= 0) {
+          stopAnalytics();
+          return;
+        }
+        sendAnalyticsRequest();
+        updateAnalyticsStatus();
+      }, ANALYTICS_INTERVAL);
+    }
+
+    function stopAnalytics() {
+      clearInterval(analyticsTimer);
+      analyticsTimer = null;
+      document.getElementById('analytics-btn').textContent = '開始';
+      const total = analyticsSuccess + analyticsErrors;
+      const errPct = total ? Math.round(analyticsErrors / total * 100) : 0;
+      document.getElementById('analytics-status').textContent =
+        `停止 | 成功: ${analyticsSuccess}  エラー: ${analyticsErrors} (${errPct}%)`;
+    }
+
+    async function sendAnalyticsRequest() {
+      const endpoints = ['/analytics', '/analytics/summary'];
+      const url = endpoints[Math.floor(Math.random() * endpoints.length)];
+      try {
+        const res = await fetch(url);
+        if (res.ok) { analyticsSuccess++; } else { analyticsErrors++; }
+      } catch { analyticsErrors++; }
+      updateAnalyticsStatus();
+    }
+
+    function updateAnalyticsStatus() {
+      const total = analyticsSuccess + analyticsErrors;
+      const errPct = total ? Math.round(analyticsErrors / total * 100) : 0;
+      const rem = Math.max(0, analyticsRemaining);
+      const mm = String(Math.floor(rem / 60)).padStart(2, '0');
+      const ss = String(rem % 60).padStart(2, '0');
+      document.getElementById('analytics-status').textContent =
+        `実行中 / 残り ${mm}:${ss} | 成功: ${analyticsSuccess}  エラー: ${analyticsErrors} (${errPct}%)`;
+    }
   </script>
 
 </body>
